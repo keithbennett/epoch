@@ -1,5 +1,4 @@
-! Copyright (C) 2010-2015 Keith Bennett <K.Bennett@warwick.ac.uk>
-! Copyright (C) 2009      Chris Brady <C.S.Brady@warwick.ac.uk>
+! Copyright (C) 2009-2019 University of Warwick
 !
 ! This program is free software: you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
@@ -22,6 +21,7 @@ MODULE boundary
   USE mpi_subtype_control
   USE utilities
   USE particle_id_hash_mod
+  USE injectors
 
   IMPLICIT NONE
 
@@ -29,7 +29,7 @@ CONTAINS
 
   SUBROUTINE setup_boundaries
 
-    INTEGER :: i, ispecies
+    INTEGER :: i, ispecies, bc
     LOGICAL :: error
     CHARACTER(LEN=5), DIMENSION(2*c_ndims) :: &
         boundary = (/ 'x_min', 'x_max' /)
@@ -59,10 +59,10 @@ CONTAINS
     error = .FALSE.
     DO ispecies = 1, n_species
       DO i = 1, 2*c_ndims
+        bc = species_list(ispecies)%bc_particle(i)
         bc_error = 'Unrecognised "' // TRIM(boundary(i)) // '" boundary for ' &
             // 'species "' // TRIM(species_list(ispecies)%name) // '"'
-        error = error .OR. setup_particle_boundary(&
-            species_list(ispecies)%bc_particle(i), bc_error)
+        error = error .OR. setup_particle_boundary(bc, bc_error)
       END DO
     END DO
 
@@ -72,6 +72,27 @@ CONTAINS
     END IF
 
   END SUBROUTINE setup_boundaries
+
+
+
+  SUBROUTINE setup_domain_dependent_boundaries
+
+    ! Any boundary condition setup that needs the domain to have already been
+    ! created should be added here
+
+    INTEGER :: ispecies, i, bc
+
+    DO ispecies = 1, n_species
+      DO i = 1, 2*c_ndims
+        bc = species_list(ispecies)%bc_particle(i)
+        IF (bc == c_bc_heat_bath) THEN
+          CALL create_boundary_injector(ispecies, i)
+          species_list(ispecies)%bc_particle(i) = c_bc_open
+        END IF
+      END DO
+    END DO
+
+  END SUBROUTINE setup_domain_dependent_boundaries
 
 
 
@@ -105,6 +126,7 @@ CONTAINS
     IF (boundary == c_bc_periodic &
         .OR. boundary == c_bc_reflect &
         .OR. boundary == c_bc_thermal &
+        .OR. boundary == c_bc_heat_bath &
         .OR. boundary == c_bc_open) RETURN
 
     IF (rank == 0) THEN
@@ -221,7 +243,7 @@ CONTAINS
 
     IF (boundary == c_bd_x_min .AND. x_min_boundary) THEN
       IF (stagger(c_dir_x,stagger_type)) THEN
-        DO i = 1, ng
+        DO i = 1, ng-1
           field(i-ng) = field(ng-i)
         END DO
       ELSE
@@ -232,7 +254,7 @@ CONTAINS
     ELSE IF (boundary == c_bd_x_max .AND. x_max_boundary) THEN
       nn = nx
       IF (stagger(c_dir_x,stagger_type)) THEN
-        DO i = 1, ng
+        DO i = 1, ng-1
           field(nn+i) = field(nn-i)
         END DO
       ELSE
@@ -474,8 +496,9 @@ CONTAINS
     ! Perfectly conducting boundaries
     DO i = c_bd_x_min, c_bd_x_max, c_bd_x_max - c_bd_x_min
       IF (bc_field(i) == c_bc_conduct) THEN
-        CALL field_clamp_zero(ey, ng, c_stagger_ey, i)
-        CALL field_clamp_zero(ez, ng, c_stagger_ez, i)
+        CALL field_clamp_zero(ex, ng, c_stagger_ex, i)
+        CALL field_zero_gradient(ey, c_stagger_ey, i)
+        CALL field_zero_gradient(ez, c_stagger_ez, i)
       END IF
     END DO
 
@@ -518,9 +541,9 @@ CONTAINS
     ! Perfectly conducting boundaries
     DO i = c_bd_x_min, c_bd_x_max, c_bd_x_max - c_bd_x_min
       IF (bc_field(i) == c_bc_conduct) THEN
-        CALL field_clamp_zero(bx, ng, c_stagger_bx, i)
-        CALL field_zero_gradient(by, c_stagger_by, i)
-        CALL field_zero_gradient(bz, c_stagger_bz, i)
+        CALL field_zero_gradient(bx, c_stagger_bx, i)
+        CALL field_clamp_zero(by, ng, c_stagger_by, i)
+        CALL field_clamp_zero(bz, ng, c_stagger_bz, i)
       END IF
     END DO
 
@@ -648,8 +671,9 @@ CONTAINS
 
                 ! x-direction
                 i = 1
-                cur%part_p(i) = -sgn * flux_momentum_from_temperature(&
-                    species_list(ispecies)%mass, temp(i), 0.0_num)
+                cur%part_p(i) = flux_momentum_from_temperature(&
+                    species_list(ispecies)%mass, temp(i), 0.0_num, &
+                    -REAL(sgn, num))
 
                 ! y-direction
                 i = 2
@@ -710,8 +734,9 @@ CONTAINS
 
                 ! x-direction
                 i = 1
-                cur%part_p(i) = -sgn * flux_momentum_from_temperature(&
-                    species_list(ispecies)%mass, temp(i), 0.0_num)
+                cur%part_p(i) = flux_momentum_from_temperature(&
+                    species_list(ispecies)%mass, temp(i), 0.0_num, &
+                    -REAL(sgn, num))
 
                 ! y-direction
                 i = 2

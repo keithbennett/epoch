@@ -1,5 +1,4 @@
-! Copyright (C) 2010-2015 Keith Bennett <K.Bennett@warwick.ac.uk>
-! Copyright (C) 2009      Chris Brady <C.S.Brady@warwick.ac.uk>
+! Copyright (C) 2009-2019 University of Warwick
 !
 ! This program is free software: you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
@@ -16,11 +15,13 @@
 
 MODULE particle_temperature
 
-  USE shared_data
+  USE constants
   USE random_generator
   USE evaluator
 
   IMPLICIT NONE
+
+  REAL(num), PARAMETER, PRIVATE :: max_average_its = 20.0_num
 
 CONTAINS
 
@@ -149,18 +150,19 @@ CONTAINS
     REAL(num) :: mass
     REAL(num), DIMENSION(c_ndirs) ::  drift_local
     TYPE(particle), POINTER :: current
-    INTEGER(i8) :: ipart, iit, ipart_global, iit_global
+    INTEGER(i8) :: ipart, it, ipart_global, it_global
     REAL(num) :: average_its
     INTEGER :: ix, iy, iz, idir, err
     TYPE(parameter_pack) :: parameters
     REAL(num), DIMENSION(c_ndirs, 2) :: ranges
     CHARACTER(LEN=25) :: string
+    INTEGER :: iu, io
 #include "particle_head.inc"
 
     partlist => part_species%attached_list
     current => partlist%head
     ipart = 0
-    iit = 0
+    it = 0
     DO WHILE(ipart < partlist%count)
 #ifdef PER_PARTICLE_CHARGE_MASS
       mass = current%mass
@@ -196,7 +198,7 @@ CONTAINS
           parameters, 2, ranges(3,:), err)
 
       CALL sample_from_deck_expression(current, part_species%dist_fn, &
-          parameters, ranges, mass, drift_local, iit)
+          parameters, ranges, mass, drift_local, it)
 
       current => current%next
       ipart = ipart + 1
@@ -204,31 +206,22 @@ CONTAINS
 
     CALL MPI_REDUCE(ipart, ipart_global, 1, MPI_INTEGER8, MPI_SUM, 0, comm, &
         errcode)
-    CALL MPI_REDUCE(iit, iit_global, 1, MPI_INTEGER8, MPI_SUM, 0, comm, &
+    CALL MPI_REDUCE(it, it_global, 1, MPI_INTEGER8, MPI_SUM, 0, comm, &
         errcode)
-    average_its = REAL(iit_global, num) / MAX(REAL(ipart_global, num), c_tiny)
+    average_its = REAL(it_global, num) / MAX(REAL(ipart_global, num), c_tiny)
 
-    IF (rank == 0) THEN
+    IF (rank == 0 .AND. average_its >= max_average_its) THEN
       WRITE(string,'(F8.1)') average_its
-      WRITE(*,*) 'Setup distribution for particles of species ', '"' &
-          // TRIM(part_species%name) // '"', ' taking ' // TRIM(string) &
-          // ' iteratations per particle on average'
-      IF (average_its >= 20.0_num) THEN
-        WRITE(*,*) '***WARNING***'
-        WRITE(*,*) 'Average iterations is high. ', &
-            'Possibly try smaller momentum range'
-      ENDIF
-#ifndef NO_IO
-      WRITE(stat_unit,*) 'Setup distribution for particles of species ', '"' &
-          // TRIM(part_species%name) // '"', ' taking ' // TRIM(string) &
-          // ' iteratations per particle on average'
-      IF (average_its >= 20.0_num) THEN
-        WRITE(stat_unit,*) '***WARNING***'
-        WRITE(stat_unit,*) 'Average iterations is high. ', &
-            'Possibly try smaller momentum range'
-      ENDIF
-#endif
-    ENDIF
+      DO iu = 1, nio_units ! Print to stdout and to file
+        io = ios_units(iu)
+        WRITE(io,*) '*** WARNING ***'
+        WRITE(io,*) 'Setup distribution for particles of species ', '"' &
+            // TRIM(part_species%name) // '"'
+        WRITE(io,*) 'taking ' // TRIM(ADJUSTL(string)) &
+            // ' iteratations per particle on average.'
+        WRITE(io,*) 'Possibly try smaller momentum range'
+      END DO
+    END IF
 
   END SUBROUTINE setup_particle_dist_fn
 
@@ -253,7 +246,7 @@ CONTAINS
     REAL(num), DIMENSION(c_ndirs) :: momentum, mmc
     REAL(num) :: mod_momentum, mass_c, pfac, drift_2
     REAL(num) :: momentum1_2, momentum2_2, momentum3_2
-    REAL(num) :: temp, temp_max, p_max_x, p_max_y, p_max_z, p_max
+    REAL(num) :: temp, p_max_x, p_max_y, p_max_z, p_max
     REAL(num) :: temp_norm1, temp_norm2, temp_norm3
     REAL(num) :: temp_fac1, temp_fac2, temp_fac3
     INTEGER :: dof
@@ -268,16 +261,15 @@ CONTAINS
     IF (dof == 0) THEN
       momentum_from_temperature_relativistic = 0.0_num
       RETURN
-    ENDIF
+    END IF
 
-    temp = SUM(temperature)
-    temp_max = MAXVAL(temperature)
+    temp = SUM(temperature) / REAL(dof, num)
     temp_norm1 = temperature(1) / temp
     temp_norm2 = temperature(2) / temp
     temp_norm3 = temperature(3) / temp
     temp_fac1 = 1.0_num / MAX(temp_norm1, c_tiny)
-    temp_fac2 = 1.0_num / MAX(temp_norm1, c_tiny)
-    temp_fac3 = 1.0_num / MAX(temp_norm1, c_tiny)
+    temp_fac2 = 1.0_num / MAX(temp_norm2, c_tiny)
+    temp_fac3 = 1.0_num / MAX(temp_norm3, c_tiny)
     mass_c = mass * c
 
     p_max = SQRT(param1 * mass * temp * LOG(cutoff) &
@@ -352,7 +344,8 @@ CONTAINS
     REAL(num), DIMENSION(c_ndirs), INTENT(INOUT) :: p
     REAL(num), INTENT(IN) :: mass_c
     REAL(num), DIMENSION(c_ndirs), INTENT(IN) :: drift
-    REAL(num), INTENT(OUT) :: gamma_before, gamma_after, gamma_drift
+    REAL(num), INTENT(OUT) :: gamma_before, gamma_after
+    REAL(num), INTENT(IN) :: gamma_drift
     REAL(num), DIMENSION(c_ndirs) :: p_mc, beta
     REAL(num), DIMENSION(c_ndirs+1) :: p4_in
     REAL(num), DIMENSION(c_ndirs,c_ndirs+1) :: boost_tensor
@@ -417,27 +410,70 @@ CONTAINS
 
   ! Function for generating momenta of thermal particles in a particular
   ! direction, e.g. the +x direction.
-  ! These satisfy a Rayleigh distribution, formed by combining two
-  ! normally-distributed (~N(0,sigma)) random variables as follows:
-  ! Z = SQRT(X**2 + Y**2)
-  FUNCTION flux_momentum_from_temperature(mass, temperature, drift)
+  ! Samples distribution v f(v - drift) where f is Maxwellian
+  ! including for drift == 0
+  ! Drift is signed, and direction should be +/- 1 giving the sign of wanted
+  ! velocity
 
-    REAL(num), INTENT(IN) :: mass, temperature, drift
-    REAL(num) :: flux_momentum_from_temperature
-    REAL(num) :: mom1, mom2
+  FUNCTION flux_momentum_from_temperature(mass, temperature, drift, direction)
 
-    mom1 = momentum_from_temperature(mass, temperature, 0.0_num)
-    mom2 = momentum_from_temperature(mass, temperature, 0.0_num)
+    REAL(num), INTENT(IN) :: mass, temperature, drift, direction
+    REAL(num) :: flux_momentum_from_temperature, mom1, mom2
+    REAL(num) :: v, vt2, vt, vd, vmin, vmax, vrange, vexp
+    REAL(num) :: norm, fac
+    INTEGER :: i
 
-    flux_momentum_from_temperature = SQRT(mom1**2 + mom2**2) + drift
+    IF (ABS(drift) > c_tiny) THEN
+      vt2 = kb * temperature / mass
+      IF (vt2 < c_tiny) THEN
+        flux_momentum_from_temperature = drift
+        RETURN
+      END IF
+
+      vt = SQRT(vt2)
+      vrange = 3.0_num * vt
+      vd = direction * drift / mass
+      vmax = vd + vrange
+
+      IF (vmax < c_tiny) THEN
+        flux_momentum_from_temperature = 0.0_num
+        RETURN
+      END IF
+
+      vmin = MAX(vd - vrange, 0.0_num)
+      vrange = vmax - vmin
+
+      fac = -0.5_num / vt2
+      vexp = 0.5_num * (vd + SQRT(vd**2 + 4.0_num * vt2))
+      norm = 1.0_num / (vexp * EXP(fac * (vexp - vd)**2))
+
+      DO i = 1, 1000
+        v = vmin + random() * vrange
+
+        IF (random() < norm * v * EXP(fac * (v - vd)**2)) THEN
+          flux_momentum_from_temperature = direction * v * mass
+          RETURN
+        END IF
+      END DO
+    ELSE
+      ! These satisfy a Rayleigh distribution, formed by combining two
+      ! normally-distributed (~N(0,sigma)) random variables as follows:
+      ! Z = SQRT(X**2 + Y**2)
+
+      mom1 = momentum_from_temperature(mass, temperature, 0.0_num)
+      mom2 = momentum_from_temperature(mass, temperature, 0.0_num)
+
+      flux_momentum_from_temperature = direction * SQRT(mom1**2 + mom2**2)
+    END IF
 
   END FUNCTION flux_momentum_from_temperature
 
 
 
   ! Function to take a deck expression and sample until it returns a value
+
   SUBROUTINE sample_from_deck_expression(part, stack, parameters, &
-      ranges, mass, drift, iit_r)
+      ranges, mass, drift, it_r)
 
     TYPE(particle), INTENT(INOUT) :: part
     TYPE(primitive_stack), INTENT(INOUT) :: stack
@@ -445,16 +481,16 @@ CONTAINS
     REAL(num), DIMENSION(c_ndirs,2), INTENT(IN) :: ranges
     REAL(num), INTENT(IN) :: mass
     REAL(num), DIMENSION(c_ndirs) , INTENT(IN) :: drift
-    INTEGER(i8), INTENT(INOUT), OPTIONAL :: iit_r
+    INTEGER(i8), INTENT(INOUT), OPTIONAL :: it_r
     REAL(num) :: rand, probability, mass_c, drift_2
     REAL(num) :: gamma_before, gamma_after, gamma_drift, gamma_drift_fac
     REAL(num) :: range_diff1, range_diff2, range_diff3
     INTEGER :: err
-    INTEGER(i8) :: iit
+    INTEGER(i8) :: it
     LOGICAL :: no_drift
 
     err = c_err_none
-    IF (PRESENT(iit_r)) iit = iit_r
+    IF (PRESENT(it_r)) it = it_r
 
     drift_2 = DOT_PRODUCT(drift, drift)
     IF (drift_2 < c_tiny) THEN
@@ -482,9 +518,9 @@ CONTAINS
       IF (err /= c_err_none .AND. rank == 0) THEN
         PRINT*, 'Unable to evaluate distribution function'
         CALL abort_code(c_err_bad_setup)
-      ENDIF
+      END IF
 
-      iit = iit + 1
+      it = it + 1
 
       rand = random()
       IF (rand > probability) CYCLE
@@ -496,9 +532,9 @@ CONTAINS
 
       rand = random()
       IF (rand < gamma_drift_fac * (gamma_after / gamma_before)) EXIT
-    ENDDO
+    END DO
 
-    IF (PRESENT(iit_r)) iit_r = iit
+    IF (PRESENT(it_r)) it_r = it
 
     part%part_p = parameters%pack_p
 

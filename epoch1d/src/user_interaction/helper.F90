@@ -1,5 +1,4 @@
-! Copyright (C) 2010-2015 Keith Bennett <K.Bennett@warwick.ac.uk>
-! Copyright (C) 2009-2010 Chris Brady <C.S.Brady@warwick.ac.uk>
+! Copyright (C) 2009-2019 University of Warwick
 !
 ! This program is free software: you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
@@ -67,11 +66,31 @@ CONTAINS
 
 
 
+  SUBROUTINE setup_background_species
+
+    INTEGER :: ispecies
+    TYPE(particle_species), POINTER :: species
+
+    DO ispecies = 1, n_species
+      species => species_list(ispecies)
+
+      IF (.NOT.species%background_species) CYCLE
+
+      CALL setup_ic_density(ispecies)
+
+      ALLOCATE(species%background_density(1-ng:nx+ng))
+      species%background_density  = species_density
+    END DO
+
+  END SUBROUTINE setup_background_species
+
+
+
   SUBROUTINE auto_load
 
     INTEGER :: ispecies, n
     TYPE(particle_species), POINTER :: species
-    INTEGER :: i0, i1
+    INTEGER :: i0, i1, iu, io
     TYPE(initial_condition_block), POINTER :: ic
 
     IF (pre_loading .AND. n_species > 0) THEN
@@ -91,6 +110,12 @@ CONTAINS
 
       CALL setup_ic_density(ispecies)
 
+      IF (species%background_species) THEN
+        ALLOCATE(species%background_density(1-ng:nx+ng))
+        species%background_density  = species_density
+        CYCLE
+      END IF
+
 #ifdef PER_SPECIES_WEIGHT
       CALL non_uniform_load_particles(species_density, species, &
           ic%density_min, ic%density_max)
@@ -104,17 +129,21 @@ CONTAINS
       CALL setup_ic_drift(ispecies)
       CALL set_thermal_bcs(ispecies)
 
-      IF (species_list(ispecies)%ic_df_type == c_ic_df_thermal) THEN
+      IF (species%ic_df_type == c_ic_df_thermal) THEN
         DO n = 1, 3
-          CALL setup_particle_temperature(&
-              species_temp(:,n), n, species, species_drift(:,n))
+          CALL setup_particle_temperature(species_temp(:,n), n, species, &
+              species_drift(:,n))
         END DO
         CALL deltaf_load(ispecies, species_temp, species_drift)
+<<<<<<< HEAD
       ELSE IF (species_list(ispecies)%ic_df_type &
           == c_ic_df_relativistic_thermal) THEN
+=======
+      ELSE IF (species%ic_df_type == c_ic_df_relativistic_thermal) THEN
+>>>>>>> origin/4.17-devel
         CALL setup_particle_temperature_relativistic(species_temp, species, &
             species_drift)
-      ELSE IF (species_list(ispecies)%ic_df_type == c_ic_df_arbitrary) THEN
+      ELSE IF (species%ic_df_type == c_ic_df_arbitrary) THEN
         CALL setup_particle_dist_fn(species, species_drift)
       END IF
     END DO
@@ -131,13 +160,13 @@ CONTAINS
     IF (rank == 0) THEN
       DO ispecies = 1, n_species
         species => species_list(ispecies)
+        IF (species%background_species) CYCLE
         IF (species%count < 0) THEN
-          WRITE(*,*) 'No particles specified for species ', &
-              '"' // TRIM(species%name) // '"'
-#ifndef NO_IO
-          WRITE(stat_unit,*) 'No particles specified for species ', &
-              '"' // TRIM(species%name) // '"'
-#endif
+          DO iu = 1, nio_units
+            io = ios_units(iu)
+            WRITE(io,*) 'No particles specified for species ', &
+                '"' // TRIM(species%name) // '"'
+          END DO
           species%count = 0
         END IF
       END DO
@@ -204,6 +233,7 @@ CONTAINS
     CHARACTER(LEN=15) :: string
     TYPE(particle_list), POINTER :: partlist
     TYPE(particle), POINTER :: current, next
+    INTEGER :: iu, io
 
     partlist => species%attached_list
 
@@ -302,12 +332,11 @@ CONTAINS
 
     IF (rank == 0) THEN
       CALL integer_as_string(npart_this_species, string)
-      WRITE(*,*) 'Loaded ', TRIM(ADJUSTL(string)), &
-          ' particles of species ', '"' // TRIM(species%name) // '"'
-#ifndef NO_IO
-      WRITE(stat_unit,*) 'Loaded ', TRIM(ADJUSTL(string)), &
-          ' particles of species ', '"' // TRIM(species%name) // '"'
-#endif
+      DO iu = 1, nio_units
+        io = ios_units(iu)
+        WRITE(io,*) 'Loaded ', TRIM(ADJUSTL(string)), &
+            ' particles of species ', '"' // TRIM(species%name) // '"'
+      END DO
     END IF
 
     CALL particle_bcs
@@ -338,6 +367,7 @@ CONTAINS
     INTEGER :: ix_min, ix_max
     CHARACTER(LEN=15) :: string
     LOGICAL :: sweep
+    INTEGER :: iu, io
 
     npart_this_species = species%count
     IF (npart_this_species <= 0) RETURN
@@ -565,12 +595,11 @@ CONTAINS
 
     IF (rank == 0) THEN
       CALL integer_as_string(npart_this_species, string)
-      WRITE(*,*) 'Loaded ', TRIM(ADJUSTL(string)), &
-          ' particles of species ', '"' // TRIM(species%name) // '"'
-#ifndef NO_IO
-      WRITE(stat_unit,*) 'Loaded ', TRIM(ADJUSTL(string)), &
-          ' particles of species ', '"' // TRIM(species%name) // '"'
-#endif
+      DO iu = 1, nio_units
+        io = ios_units(iu)
+        WRITE(io,*) 'Loaded ', TRIM(ADJUSTL(string)), &
+            ' particles of species ', '"' // TRIM(species%name) // '"'
+      END DO
     END IF
 
     CALL particle_bcs
@@ -590,9 +619,6 @@ CONTAINS
     TYPE(particle), POINTER :: current, next
     INTEGER(i8) :: ipart
     INTEGER, DIMENSION(:), ALLOCATABLE :: npart_in_cell
-#ifdef PARTICLE_SHAPE_TOPHAT
-    REAL(num), DIMENSION(:), ALLOCATABLE :: rpart_in_cell
-#endif
     REAL(num) :: wdata, x0, x1
     TYPE(particle_list), POINTER :: partlist
     INTEGER :: ix, i, isubx
@@ -650,6 +676,11 @@ CONTAINS
       END DO ! isubx
 
       current%weight = wdata
+#ifdef PARTICLE_SHAPE_TOPHAT
+      ! For a TOPHAT shape function, cell_x may not be the cell
+      ! containing the particle position
+      IF (gx(1) > gx(0)) cell_x = cell_x + 1
+#endif
       npart_in_cell(cell_x) = npart_in_cell(cell_x) + 1
 
       current => current%next
@@ -660,28 +691,12 @@ CONTAINS
 
     wdata = dx
 
-#ifdef PARTICLE_SHAPE_TOPHAT
-    ! For the TOPHAT shape function, particles can be located on a
-    ! neighbouring process
-    ALLOCATE(rpart_in_cell(1-ng:nx+ng))
-
-    rpart_in_cell = npart_in_cell
-    CALL processor_summation_bcs(rpart_in_cell, ng)
-    npart_in_cell = INT(rpart_in_cell)
-
-    DEALLOCATE(rpart_in_cell)
-#endif
-
     partlist => species%attached_list
     ! Second loop renormalises particle weights
     current => partlist%head
     ipart = 0
     DO WHILE(ipart < partlist%count)
-#ifdef PARTICLE_SHAPE_TOPHAT
-      cell_x = FLOOR((current%part_pos - x_grid_min_local) / dx) + 1
-#else
       cell_x = FLOOR((current%part_pos - x_grid_min_local) / dx + 1.5_num)
-#endif
 
       current%weight = current%weight * wdata / npart_in_cell(cell_x)
 
@@ -761,11 +776,11 @@ CONTAINS
 
     LOGICAL :: file_inconsistencies
     INTEGER :: current_loader_num
-    INTEGER :: part_count, read_count
+    INTEGER :: part_count, read_count, iu, io
     CHARACTER(LEN=string_length) :: stra
     REAL(num), DIMENSION(:), POINTER :: xbuf
     REAL(num), DIMENSION(:), POINTER :: pxbuf, pybuf, pzbuf
-#if !defined(PER_SPECIES_WEIGHT) || defined (PHOTONS)
+#if !defined(PER_SPECIES_WEIGHT) || defined (PHOTONS) || defined(BREMSSTRAHLUNG)
     REAL(num), DIMENSION(:), POINTER :: wbuf
 #endif
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
@@ -800,7 +815,7 @@ CONTAINS
       part_count = load_1d_real_array(curr_loader%x_data, xbuf, &
           curr_loader%x_data_offset, errcode)
 
-#if !defined(PER_SPECIES_WEIGHT) || defined (PHOTONS)
+#if !defined(PER_SPECIES_WEIGHT) || defined (PHOTONS) || defined(BREMSSTRAHLUNG)
       read_count = load_1d_real_array(curr_loader%w_data, wbuf, &
           curr_loader%w_data_offset, errcode)
       IF (part_count /= read_count) file_inconsistencies = .TRUE.
@@ -867,7 +882,7 @@ CONTAINS
 
         ! Insert data to particle
         new_particle%part_pos = xbuf(read_count)
-#if !defined(PER_SPECIES_WEIGHT) || defined (PHOTONS)
+#if !defined(PER_SPECIES_WEIGHT) || defined (PHOTONS) || defined(BREMSSTRAHLUNG)
         new_particle%weight = wbuf(read_count)
 #endif
         IF (curr_loader%px_data_given) THEN
@@ -912,12 +927,11 @@ CONTAINS
 
       IF (rank == 0) THEN
         CALL integer_as_string(species%count, stra)
-        WRITE(*,*) 'Inserted ', TRIM(stra), &
-            ' custom particles of species "', TRIM(species%name), '"'
-#ifndef NO_IO
-        WRITE(stat_unit,*) 'Inserted ', TRIM(stra), &
-            ' custom particles of species "', TRIM(species%name), '"'
-#endif
+        DO iu = 1, nio_units
+          io = ios_units(iu)
+          WRITE(io,*) 'Inserted ', TRIM(stra), &
+              ' custom particles of species "', TRIM(species%name), '"'
+        END DO
       END IF
     END DO
 

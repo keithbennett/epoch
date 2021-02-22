@@ -1,6 +1,4 @@
-! Copyright (C) 2010-2015 Keith Bennett <K.Bennett@warwick.ac.uk>
-! Copyright (C) 2009-2012 Chris Brady <C.S.Brady@warwick.ac.uk>
-! Copyright (C) 2012      Martin Ramsay <M.G.Ramsay@warwick.ac.uk>
+! Copyright (C) 2009-2019 University of Warwick
 !
 ! This program is free software: you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
@@ -133,6 +131,15 @@ CONTAINS
       current => species_list(ispecies)%attached_list%head
       IF (species_list(ispecies)%immobile) CYCLE
       IF (species_list(ispecies)%species_type == c_species_id_photon) THEN
+#ifdef BREMSSTRAHLUNG
+        IF (ispecies == bremsstrahlung_photon_species) THEN
+          IF (bremsstrahlung_photon_dynamics) THEN
+            CALL push_photons(ispecies)
+          ELSE
+            CYCLE
+          END IF
+        END IF
+#endif
 #ifdef PHOTONS
         IF (photon_dynamics) CALL push_photons(ispecies)
 #endif
@@ -409,7 +416,7 @@ CONTAINS
 #ifndef NO_TRACER_PARTICLES
         END IF
 #endif
-#ifndef NO_PARTICLE_PROBES
+#if !defined(NO_PARTICLE_PROBES) && !defined(NO_IO)
         IF (probes_for_species) THEN
           ! Compare the current particle with the parameters of any probes in
           ! the system. These particles are copied into a separate part of the
@@ -501,7 +508,7 @@ CONTAINS
 
 
 
-#ifdef PHOTONS
+#if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
   SUBROUTINE push_photons(ispecies)
 
     ! Very simple photon pusher
@@ -509,6 +516,7 @@ CONTAINS
     REAL(num) :: delta_x, delta_y
     INTEGER,INTENT(IN) :: ispecies
     TYPE(particle), POINTER :: current
+    REAL(num) :: current_energy, dtfac, fac
 
     ! Used for particle probes (to see of probe conditions are satisfied)
 #ifndef NO_PARTICLE_PROBES
@@ -517,7 +525,6 @@ CONTAINS
     TYPE(particle_probe), POINTER :: current_probe
     TYPE(particle), POINTER :: particle_copy
     REAL(num) :: d_init, d_final
-    REAL(num) :: probe_energy, dtfac, fac
     LOGICAL :: probes_for_species
 #endif
 
@@ -533,9 +540,9 @@ CONTAINS
     DO WHILE(ASSOCIATED(current))
       ! Note that this is the energy of a single REAL particle in the
       ! pseudoparticle, NOT the energy of the pseudoparticle
-      probe_energy = current%particle_energy
+      current_energy = current%particle_energy
 
-      fac = dtfac / probe_energy
+      fac = dtfac / current_energy
       delta_x = current%part_p(1) * fac
       delta_y = current%part_p(2) * fac
 #ifndef NO_PARTICLE_PROBES
@@ -559,8 +566,8 @@ CONTAINS
         ! Cycle through probes
         DO WHILE(ASSOCIATED(current_probe))
           ! Unidirectional probe
-          IF (probe_energy > current_probe%ek_min) THEN
-            IF (probe_energy < current_probe%ek_max) THEN
+          IF (current_energy > current_probe%ek_min) THEN
+            IF (current_energy < current_probe%ek_max) THEN
 
               d_init  = SUM(current_probe%normal &
                   * (current_probe%point - (/init_part_x, init_part_y/)))

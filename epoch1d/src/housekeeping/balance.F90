@@ -1,6 +1,4 @@
-! Copyright (C) 2010-2015 Keith Bennett <K.Bennett@warwick.ac.uk>
-! Copyright (C) 2012      Martin Ramsay <M.G.Ramsay@warwick.ac.uk>
-! Copyright (C) 2009      Chris Brady <C.S.Brady@warwick.ac.uk>
+! Copyright (C) 2009-2019 University of Warwick
 !
 ! This program is free software: you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
@@ -29,7 +27,6 @@ MODULE balance
   LOGICAL :: overriding
   REAL(num) :: load_av
   INTEGER :: old_comm, old_coordinates(c_ndims)
-  INTEGER :: ng_max
 
 CONTAINS
 
@@ -57,7 +54,6 @@ CONTAINS
 
     ! On one processor do nothing to save time
     IF (nproc == 1) RETURN
-    ng_max = MAX(ng, jng, sng)
 
     full_check = over_ride
     IF (step - last_full_check < dlb_force_interval) THEN
@@ -312,7 +308,6 @@ CONTAINS
   SUBROUTINE redistribute_domain
 
     INTEGER, DIMENSION(c_ndims,2) :: domain
-    INTEGER :: iproc
 
     IF (.NOT.ALLOCATED(new_cell_x_min)) RETURN
 
@@ -342,25 +337,10 @@ CONTAINS
     ! Do X array separately because we already have global copies
     DEALLOCATE(x)
     ALLOCATE(x(1-ng:nx+ng))
-    x(1-ng:nx+ng) = x_global(nx_global_min-ng:nx_global_max+ng)
-
     DEALLOCATE(xb)
     ALLOCATE(xb(1-ng:nx+ng))
-    xb(1-ng:nx+ng) = xb_global(nx_global_min-ng:nx_global_max+ng)
 
-    ! Recalculate x_grid_mins/maxs so that rebalancing works next time
-    DO iproc = 0, nprocx - 1
-      x_grid_mins(iproc) = x_global(cell_x_min(iproc+1))
-      x_grid_maxs(iproc) = x_global(cell_x_max(iproc+1))
-    END DO
-
-    ! Set the lengths of the current domain so that the particle balancer
-    ! works properly
-    x_grid_min_local = x_grid_mins(x_coords)
-    x_grid_max_local = x_grid_maxs(x_coords)
-
-    x_min_local = x_grid_min_local + (cpml_x_min_offset - 0.5_num) * dx
-    x_max_local = x_grid_max_local - (cpml_x_max_offset - 0.5_num) * dx
+    CALL setup_grid_x
 
   END SUBROUTINE redistribute_domain
 
@@ -378,6 +358,7 @@ CONTAINS
     REAL(r4), DIMENSION(:,:), ALLOCATABLE :: r4temp_sum
     REAL(num), DIMENSION(:), ALLOCATABLE :: temp, temp2
     TYPE(particle_species_migration), POINTER :: mg
+    TYPE(particle_species), POINTER :: sp
     TYPE(initial_condition_block), POINTER :: ic
     INTEGER :: i, ispecies, io, id, nspec_local, mask
 
@@ -401,19 +382,19 @@ CONTAINS
     IF (overriding) THEN
       ALLOCATE(temp2(1-ng:nx+ng))
 
-      temp2(0:nx+1) = jx(0:nx+1)
+      temp2 = jx
       CALL remap_field(temp2, temp)
       DEALLOCATE(jx)
       ALLOCATE(jx(1-jng:nx_new+jng))
       jx(0:nx_new+1) = temp(0:nx_new+1)
 
-      temp2(0:nx+1) = jy(0:nx+1)
+      temp2 = jy
       CALL remap_field(temp2, temp)
       DEALLOCATE(jy)
       ALLOCATE(jy(1-jng:nx_new+jng))
       jy(0:nx_new+1) = temp(0:nx_new+1)
 
-      temp2(0:nx+1) = jz(0:nx+1)
+      temp2 = jz
       CALL remap_field(temp2, temp)
       DEALLOCATE(jz)
       ALLOCATE(jz(1-jng:nx_new+jng))
@@ -466,7 +447,8 @@ CONTAINS
     END IF
 
     DO ispecies = 1, n_species
-      mg => species_list(ispecies)%migrate
+      sp => species_list(ispecies)
+      mg => sp%migrate
 
       IF (mg%fluid) THEN
         CALL remap_field(mg%fluid_energy, temp)
@@ -478,6 +460,13 @@ CONTAINS
         DEALLOCATE(mg%fluid_density)
         ALLOCATE(mg%fluid_density(1-ng:nx_new+ng))
         mg%fluid_density = temp
+      END IF
+
+      IF (sp%background_species) THEN
+        CALL remap_field(sp%background_density, temp)
+        DEALLOCATE(sp%background_density)
+        ALLOCATE(sp%background_density(1-ng:nx_new+ng))
+        sp%background_density = temp
       END IF
 
       IF (.NOT.pre_loading) CYCLE
@@ -508,7 +497,7 @@ CONTAINS
         ic%temp = temp_sum
       END IF
 
-      IF (ASSOCIATED(ic%temp)) THEN
+      IF (ASSOCIATED(ic%drift)) THEN
         IF (.NOT. ALLOCATED(temp_sum)) &
             ALLOCATE(temp_sum(1-ng:nx_new+ng,3))
         CALL remap_field(ic%drift(:,1), temp_sum(:,1))
@@ -1071,6 +1060,7 @@ CONTAINS
     INTEGER, INTENT(IN) :: nproc
     INTEGER, DIMENSION(:), INTENT(OUT) :: mins, maxs
     INTEGER :: sz, idim, proc, old, nextra, i, i0, i1, iter, old_maxs, new_maxs
+    INTEGER :: ii
     INTEGER(i8) :: total, total_old, load_per_proc_ideal
     INTEGER(i8) :: load_local, load_max, load_min, load_var_best
 
@@ -1098,7 +1088,7 @@ CONTAINS
         END IF
         ! To communicate ghost cell information correctly, each domain must
         ! contain at least ng cells.
-        nextra = old - maxs(proc) + ng_max
+        nextra = old - maxs(proc) + ncell_min
         IF (nextra > 0) THEN
           maxs(proc) = maxs(proc) + nextra
         END IF
@@ -1112,8 +1102,8 @@ CONTAINS
     ! Backwards
     old = sz
     DO proc = nproc-1, 1, -1
-      IF (old - maxs(proc) < ng_max) THEN
-        maxs(proc) = old - ng_max
+      IF (old - maxs(proc) < ncell_min) THEN
+        maxs(proc) = old - ncell_min
       END IF
       old = maxs(proc)
     END DO
@@ -1127,7 +1117,8 @@ CONTAINS
         IF (i == 1) THEN
           old = 0
         ELSE
-          old = maxs(i-1)
+          ii = i - 1
+          old = maxs(ii)
         END IF
         new_maxs = old_maxs
         IF (old_maxs - old - 1 >= ng) new_maxs = old_maxs - 1
@@ -1182,8 +1173,8 @@ CONTAINS
     ! Backwards
     old = sz
     DO proc = nproc-1, 1, -1
-      IF (old - maxs(proc) < ng_max) THEN
-        maxs(proc) = old - ng_max
+      IF (old - maxs(proc) < ncell_min) THEN
+        maxs(proc) = old - ncell_min
       END IF
       old = maxs(proc)
     END DO
@@ -1191,8 +1182,8 @@ CONTAINS
     ! Forwards (unnecessary?)
     old = 0
     DO proc = 1, nproc-1
-      IF (maxs(proc) - old < ng_max) THEN
-        maxs(proc) = old + ng_max
+      IF (maxs(proc) - old < ncell_min) THEN
+        maxs(proc) = old + ncell_min
       END IF
       old = maxs(proc)
     END DO

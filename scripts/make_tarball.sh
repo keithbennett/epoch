@@ -1,6 +1,6 @@
 #! /bin/sh
 
-# Copyright (C) 2012-2015 Keith Bennett <K.Bennett@warwick.ac.uk>
+# Copyright (C) 2009-2019 University of Warwick
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -55,13 +55,13 @@ if [ "$cstring"x != "$fullstring"x ]; then
 fi
 
 (cd SDF/VisIt
-/bin/sh gen_commit_string.sh)
+/bin/sh gen_commit_string.sh .)
 (cd SDF/FORTRAN
-/bin/sh src/gen_commit_string.sh)
+/bin/sh src/gen_commit_string.sh src)
 (cd SDF/C/src
-/bin/sh gen_commit_string.sh)
+/bin/sh gen_commit_string.sh .)
 (cd SDF/utilities
-/bin/sh gen_commit_string.sh)
+/bin/sh gen_commit_string.sh .)
 (cd epoch1d
 /bin/sh src/gen_commit_string.sh)
 cp epoch1d/src/COMMIT epoch2d/src/

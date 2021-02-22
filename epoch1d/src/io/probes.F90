@@ -1,5 +1,4 @@
-! Copyright (C) 2010-2015 Keith Bennett <K.Bennett@warwick.ac.uk>
-! Copyright (C) 2009-2012 Chris Brady <C.S.Brady@warwick.ac.uk>
+! Copyright (C) 2009-2019 University of Warwick
 !
 ! This program is free software: you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
@@ -211,11 +210,18 @@ CONTAINS
     INTEGER, INTENT(IN), OPTIONAL :: param
     TYPE(particle), POINTER, SAVE :: cur
     INTEGER :: part_count
+    REAL(num) :: window_shift
 
     IF (start)  THEN
       cur => current_list%head
     END IF
     part_count = 0
+
+    IF (use_offset_grid .AND. direction == c_dir_x) THEN
+      window_shift = window_offset
+    ELSE
+      window_shift = 0.0_num
+    END IF
 
     DO WHILE (ASSOCIATED(cur) .AND. (part_count < npoint_it))
       part_count = part_count+1

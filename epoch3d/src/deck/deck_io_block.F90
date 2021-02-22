@@ -1,5 +1,4 @@
-! Copyright (C) 2010-2015 Keith Bennett <K.Bennett@warwick.ac.uk>
-! Copyright (C) 2009      Chris Brady <C.S.Brady@warwick.ac.uk>
+! Copyright (C) 2009-2019 University of Warwick
 !
 ! This program is free software: you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
@@ -32,6 +31,7 @@ MODULE deck_io_block
   LOGICAL, DIMENSION(num_vars_to_dump) :: io_block_done
   LOGICAL, PRIVATE :: got_name, got_dump_source_code, got_dump_input_decks
   LOGICAL, PRIVATE :: warning_printed, got_dt_average
+  LOGICAL, PRIVATE :: dumpmask_warned
   CHARACTER(LEN=c_id_length), ALLOCATABLE :: io_prefixes(:)
   TYPE(io_block_type), POINTER :: io_block
 
@@ -44,6 +44,7 @@ CONTAINS
 
     any_average = .FALSE.
     warning_printed = .FALSE.
+    dumpmask_warned = .FALSE.
 
     track_ejected_particles = .FALSE.
     dump_absorption = .FALSE.
@@ -60,7 +61,7 @@ CONTAINS
   SUBROUTINE io_deck_finalise
 
     INTEGER :: i, io, iu, n_zeros_estimate, n_dumps
-    REAL(num) :: dumps
+    REAL(num) :: dumps, dx
 #ifndef NO_IO
     CHARACTER(LEN=c_max_path_length) :: list_filename
 #endif
@@ -105,6 +106,8 @@ CONTAINS
         DO i = 1, n_io_blocks
           IF (io_block_list(i)%disabled) CYCLE
 
+          IF (use_offset_grid) io_block%use_offset_grid = use_offset_grid
+
           IF (io_block_list(i)%dt_average > t_end) THEN
             IF (rank == 0) THEN
               DO iu = 1, nio_units ! Print to stdout and to file
@@ -134,6 +137,14 @@ CONTAINS
 
           IF (io_block_list(i)%dt_snapshot > 0.0_num) THEN
             dumps = MAX(dumps, t_end / io_block_list(i)%dt_snapshot)
+          END IF
+
+          ! This might fail if Debye length not resolved
+          IF (io_block_list(i)%nstep_snapshot > 0) THEN
+            dx = (x_max - x_min) / nx_global
+            dx = MIN(dx, (y_max - y_min) / ny_global)
+            dx = MIN(dx, (z_max - z_min) / nz_global)
+            dumps = MAX(dumps, t_end * c / dx / io_block_list(i)%nstep_snapshot)
           END IF
         END DO
 
@@ -277,6 +288,18 @@ CONTAINS
           io_block%dump_input_decks = .TRUE.
     END IF
 
+    IF (rank == 0 .AND. new_style_io_block .AND. .NOT.dumpmask_warned) THEN
+      IF (ANY(IAND(io_block%dumpmask,c_io_restartable) == c_io_restartable) &
+          .OR. ANY(IAND(io_block%dumpmask,c_io_full) == c_io_full)) THEN
+        PRINT*, '*** WARNING ***'
+        PRINT*, 'The use of "full" and "restart" as dumpmasks in new-style ', &
+                'output blocks is '
+        PRINT*, 'deprecated and will be removed in a future version.'
+        PRINT*
+        dumpmask_warned = .TRUE.
+      END IF
+    END IF
+
     CALL set_restart_dumpmasks
 
   END SUBROUTINE io_block_end
@@ -353,13 +376,13 @@ CONTAINS
       IF (new_style_io_block) style_error = c_err_new_style_global
       force_first_to_be_restartable = as_logical_print(value, element, errcode)
 
-    ELSE IF (str_cmp(element, 'force_final_to_be_restartable')) THEN
+    ELSE IF (str_cmp(element, 'force_final_to_be_restartable') &
+        .OR. str_cmp(element, 'force_last_to_be_restartable')) THEN
       IF (new_style_io_block) style_error = c_err_new_style_global
       force_final_to_be_restartable = as_logical_print(value, element, errcode)
 
     ELSE IF (str_cmp(element, 'use_offset_grid')) THEN
-      IF (new_style_io_block) style_error = c_err_new_style_global
-      use_offset_grid = as_logical_print(value, element, errcode)
+      io_block%use_offset_grid = as_logical_print(value, element, errcode)
 
     ELSE IF (str_cmp(element, 'extended_io_file')) THEN
       IF (rank == 0) THEN
@@ -550,17 +573,24 @@ CONTAINS
 #ifdef PHOTONS
     ELSE IF (str_cmp(element, 'optical_depth')) THEN
       elementselected = c_dump_part_opdepth
+#endif
 
+#if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
     ELSE IF (str_cmp(element, 'qed_energy')) THEN
       elementselected = c_dump_part_qed_energy
+#endif
 
-#ifdef TRIDENT_PHOTONS
+#if defined(PHOTONS) && defined(TRIDENT_PHOTONS)
     ELSE IF (str_cmp(element, 'trident_optical_depth')) THEN
       elementselected = c_dump_part_opdepth_tri
 #endif
-#endif
-#ifdef WORK_DONE_INTEGRATED
 
+#ifdef BREMSSTRAHLUNG
+    ELSE IF (str_cmp(element, 'bremsstrahlung_optical_depth')) THEN
+      elementselected = c_dump_part_opdepth_brem
+#endif
+
+#ifdef WORK_DONE_INTEGRATED
     ELSE IF (str_cmp(element, 'work_x')) THEN
       elementselected = c_dump_part_work_x
 
@@ -579,7 +609,6 @@ CONTAINS
     ELSE IF (str_cmp(element, 'work_z_total')) THEN
       elementselected = c_dump_part_work_z_total
 #endif
-
 
     ELSE IF (str_cmp(element, 'ex')) THEN
       elementselected = c_dump_ex
@@ -608,7 +637,8 @@ CONTAINS
     ELSE IF (str_cmp(element, 'jz')) THEN
       elementselected = c_dump_jz
 
-    ELSE IF (str_cmp(element, 'ekbar')) THEN
+    ELSE IF (str_cmp(element, 'ekbar') &
+        .OR. str_cmp(element, 'average_particle_energy')) THEN
       elementselected = c_dump_ekbar
 
     ELSE IF (str_cmp(element, 'mass_density')) THEN
@@ -663,10 +693,12 @@ CONTAINS
     ELSE IF (str_cmp(element, 'ejected_particles')) THEN
       elementselected = c_dump_ejected_particles
 
-    ELSE IF (str_cmp(element, 'ekflux')) THEN
+    ELSE IF (str_cmp(element, 'ekflux') &
+        .OR. str_cmp(element, 'particle_energy_flux')) THEN
       elementselected = c_dump_ekflux
 
-    ELSE IF (str_cmp(element, 'poynt_flux')) THEN
+    ELSE IF (str_cmp(element, 'poynt_flux') &
+        .OR. str_cmp(element, 'poynting_flux')) THEN
       elementselected = c_dump_poynt_flux
 
     ELSE IF (str_cmp(element, 'cpml_psi_eyx')) THEN
@@ -829,6 +861,7 @@ CONTAINS
         IF (mask_element == c_dump_jx) bad = .FALSE.
         IF (mask_element == c_dump_jy) bad = .FALSE.
         IF (mask_element == c_dump_jz) bad = .FALSE.
+        IF (mask_element == c_dump_total_energy_sum) bad = .FALSE.
         IF (bad) THEN
           IF (rank == 0 .AND. IAND(mask, c_io_species) /= 0) THEN
             DO iu = 1, nio_units ! Print to stdout and to file
@@ -1007,6 +1040,7 @@ CONTAINS
     io_block%prefix_index = 1
     io_block%rolling_restart = .FALSE.
     io_block%disabled = .FALSE.
+    io_block%use_offset_grid = .FALSE.
     io_block%walltime_interval = -1.0_num
     io_block%walltime_prev = 0.0_num
     io_block%walltime_start = -1.0_num
@@ -1059,12 +1093,18 @@ CONTAINS
 #ifdef PHOTONS
     io_block%dumpmask(c_dump_part_opdepth) = &
         IOR(io_block%dumpmask(c_dump_part_opdepth), c_io_restartable)
+#endif
+#if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
     io_block%dumpmask(c_dump_part_qed_energy) = &
         IOR(io_block%dumpmask(c_dump_part_qed_energy), c_io_restartable)
-#ifdef TRIDENT_PHOTONS
+#endif
+#if defined(PHOTONS) && defined(TRIDENT_PHOTONS)
     io_block%dumpmask(c_dump_part_opdepth_tri) = &
         IOR(io_block%dumpmask(c_dump_part_opdepth_tri), c_io_restartable)
 #endif
+#ifdef BREMSSTRAHLUNG
+    io_block%dumpmask(c_dump_part_opdepth_brem) = &
+        IOR(io_block%dumpmask(c_dump_part_opdepth_brem), c_io_restartable)
 #endif
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
     io_block%dumpmask(c_dump_part_id) = &

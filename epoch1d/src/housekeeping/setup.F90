@@ -1,6 +1,4 @@
-! Copyright (C) 2010-2015 Keith Bennett <K.Bennett@warwick.ac.uk>
-! Copyright (C) 2009-2012 Chris Brady <C.S.Brady@warwick.ac.uk>
-! Copyright (C) 2012      Martin Ramsay <M.G.Ramsay@warwick.ac.uk>
+! Copyright (C) 2009-2019 University of Warwick
 !
 ! This program is free software: you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
@@ -24,11 +22,14 @@ MODULE setup
   USE split_particle
   USE shunt
   USE laser
+  USE injectors
   USE window
   USE timer
   USE helper
   USE balance
+  USE mpi_routines
   USE sdf
+  USE boundary
 
   IMPLICIT NONE
 
@@ -38,6 +39,7 @@ MODULE setup
   PUBLIC :: open_files, close_files, flush_stat_file
   PUBLIC :: setup_species, after_deck_last, set_dt
   PUBLIC :: read_cpu_split, pre_load_balance
+  PUBLIC :: open_status_file, close_status_file
 
   TYPE(particle), POINTER, SAVE :: iterator_list
 #ifndef NO_IO
@@ -80,7 +82,6 @@ CONTAINS
     cpml_x_min_offset = 0
     cpml_x_max_offset = 0
 
-    window_shift = 0.0_num
     npart_global = -1
     smooth_currents = .FALSE.
     use_balance = .FALSE.
@@ -102,6 +103,7 @@ CONTAINS
     laser_inject_local = 0.0_num
     laser_absorb_local = 0.0_num
     old_elapsed_time = 0.0_num
+    window_offset = 0.0_num
 
     NULLIFY(laser_x_min)
     NULLIFY(laser_x_max)
@@ -147,6 +149,7 @@ CONTAINS
 
     CALL setup_grid
     CALL set_initial_values
+    CALL setup_domain_dependent_boundaries
 
   END SUBROUTINE after_control
 
@@ -154,7 +157,7 @@ CONTAINS
 
   SUBROUTINE setup_grid
 
-    INTEGER :: iproc, ix
+    INTEGER :: ix
     REAL(num) :: xb_min
 
     length_x = x_max - x_min
@@ -177,21 +180,7 @@ CONTAINS
     END DO
     x_grid_max = x_global(nx_global)
 
-    DO iproc = 0, nprocx-1
-      x_grid_mins(iproc) = x_global(cell_x_min(iproc+1))
-      x_grid_maxs(iproc) = x_global(cell_x_max(iproc+1))
-    END DO
-
-    x_grid_min_local = x_grid_mins(x_coords)
-    x_grid_max_local = x_grid_maxs(x_coords)
-
-    x_min_local = x_grid_min_local + (cpml_x_min_offset - 0.5_num) * dx
-    x_max_local = x_grid_max_local - (cpml_x_max_offset - 0.5_num) * dx
-
-    ! Setup local grid
-    x(1-ng:nx+ng) = x_global(nx_global_min-ng:nx_global_max+ng)
-
-    xb(1-ng:nx+ng) = xb_global(nx_global_min-ng:nx_global_max+ng)
+    CALL setup_grid_x
 
   END SUBROUTINE setup_grid
 
@@ -324,6 +313,7 @@ CONTAINS
       NULLIFY(species_list(ispecies)%ext_temp_x_min)
       NULLIFY(species_list(ispecies)%ext_temp_x_max)
       NULLIFY(species_list(ispecies)%secondary_list)
+      NULLIFY(species_list(ispecies)%background_density)
       species_list(ispecies)%bc_particle = c_bc_null
     END DO
 
@@ -471,6 +461,31 @@ CONTAINS
 #endif
 
   END SUBROUTINE close_files
+
+
+
+  SUBROUTINE open_status_file
+
+#ifndef NO_IO
+    IF (rank == 0) THEN
+      OPEN(unit=du, status='OLD', position='APPEND', file=status_filename, &
+           iostat=errcode)
+    END IF
+#endif
+
+  END SUBROUTINE open_status_file
+
+
+
+  SUBROUTINE close_status_file
+
+#ifndef NO_IO
+    IF (rank == 0) THEN
+      CLOSE(du)
+    END IF
+#endif
+
+  END SUBROUTINE close_status_file
 
 
 
@@ -758,7 +773,7 @@ CONTAINS
     TYPE(particle_species), POINTER :: species
     INTEGER, POINTER :: species_subtypes(:)
     INTEGER, POINTER :: species_subtypes_i4(:), species_subtypes_i8(:)
-    REAL(num) :: window_offset, offset_x_min, full_x_min, offset_x_max
+    REAL(num) :: offset_x_min, full_x_min, offset_x_max
 
     got_full = .FALSE.
     npart_global = 0
@@ -1022,6 +1037,11 @@ CONTAINS
         CALL read_laser_phases(sdf_handle, n_laser_x_max, laser_x_max, &
             block_id, ndims, 'laser_x_max_phase', 'x_max')
 
+        CALL read_injector_depths(sdf_handle, injector_x_min, &
+            block_id, ndims, 'injector_x_min_depths', c_dir_x, x_min_boundary)
+        CALL read_injector_depths(sdf_handle, injector_x_max, &
+            block_id, ndims, 'injector_x_max_depths', c_dir_x, x_max_boundary)
+
       CASE(c_blocktype_constant)
         IF (str_cmp(block_id, 'dt_plasma_frequency')) THEN
           CALL sdf_read_srl(sdf_handle, dt_plasma_frequency)
@@ -1077,6 +1097,7 @@ CONTAINS
 
             IF (str_cmp(block_id, 'grid_full')) THEN
               got_full = .TRUE.
+              use_offset_grid = .TRUE.
               full_x_min = extents(1)
             ELSE
               ! Offset grid is offset only in x
@@ -1261,14 +1282,14 @@ CONTAINS
 #endif
 
         ELSE IF (block_id(1:11) == 'qed energy/') THEN
-#ifdef PHOTONS
+#if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
           CALL sdf_read_point_variable(sdf_handle, npart_local, &
               species_subtypes(ispecies), it_qed_energy)
 #else
           IF (rank == 0) THEN
             PRINT*, '*** ERROR ***'
             PRINT*, 'Cannot load dump file with QED energies.'
-            PRINT*, 'Please recompile with the -DPHOTONS option.'
+            PRINT*, 'Please recompile with -DPHOTONS or -DBREMSSTRAHLUNG.'
           END IF
           CALL abort_code(c_err_pp_options_missing)
           STOP
@@ -1283,6 +1304,20 @@ CONTAINS
             PRINT*, '*** ERROR ***'
             PRINT*, 'Cannot load dump file with Trident optical depths.'
             PRINT*, 'Please recompile with the -DTRIDENT_PHOTONS option.'
+          END IF
+          CALL abort_code(c_err_pp_options_missing)
+          STOP
+#endif
+
+        ELSE IF (block_id(1:21) == 'bremsstrahlung depth/') THEN
+#ifdef BREMSSTRAHLUNG
+          CALL sdf_read_point_variable(sdf_handle, npart_local, &
+              species_subtypes(ispecies), it_optical_depth_bremsstrahlung)
+#else
+          IF (rank == 0) THEN
+            PRINT*, '*** ERROR ***'
+            PRINT*, 'Cannot load dump file with bremsstrahlung optical depths.'
+            PRINT*, 'Please recompile with the -DBREMSSTRAHLUNG option.'
           END IF
           CALL abort_code(c_err_pp_options_missing)
           STOP
@@ -1308,17 +1343,18 @@ CONTAINS
 
     IF (use_offset_grid) THEN
       window_offset = full_x_min - offset_x_min
-      CALL shift_particles_to_window(window_offset)
+      CALL shift_particles_to_window
     END IF
 
     CALL setup_grid
 
     IF (use_offset_grid) THEN
-      CALL create_moved_window(offset_x_min, window_offset)
+      CALL create_moved_window(offset_x_min)
     END IF
 
     CALL set_thermal_bcs_all
     CALL setup_persistent_subsets
+    CALL setup_background_species
 
     IF (rank == 0) PRINT*, 'Load from restart dump OK'
 
@@ -1378,6 +1414,51 @@ CONTAINS
 
 
 
+  ! Read injector depths from restart and initialise
+  ! Requires the same injectors defined from the deck
+
+  SUBROUTINE read_injector_depths(sdf_handle, injector_base_pointer, &
+      block_id_in, ndims, block_id_compare, direction, runs_this_rank)
+
+    TYPE(sdf_file_handle), INTENT(INOUT) :: sdf_handle
+    TYPE(injector_block), POINTER :: injector_base_pointer
+    CHARACTER(LEN=*), INTENT(IN) :: block_id_in
+    INTEGER, INTENT(IN) :: ndims
+    CHARACTER(LEN=*), INTENT(IN) :: block_id_compare
+    INTEGER, INTENT(IN) :: direction
+    LOGICAL, INTENT(IN) :: runs_this_rank
+    REAL(num), DIMENSION(:), ALLOCATABLE :: depths
+    INTEGER :: inj_count
+    INTEGER, DIMENSION(4) :: dims
+
+    IF (str_cmp(block_id_in, block_id_compare)) THEN
+      CALL sdf_read_array_info(sdf_handle, dims)
+
+      ! In 1-d there is one value, 2-d there is one strip (per bnd),
+      ! in 3-d one plane etc
+
+      ALLOCATE(depths(dims(c_ndims)))
+
+      CALL sdf_read_srl(sdf_handle, depths)
+
+      CALL setup_injector_depths(injector_base_pointer, depths, inj_count)
+
+      ! Got count back so can now check and message
+      IF (ndims /= c_ndims .OR. dims(c_ndims) /= inj_count) THEN
+        PRINT*, '*** WARNING ***'
+        PRINT*, 'Number of depths on ', TRIM(block_id_in), &
+            ' does not match number of injectors.'
+        PRINT*, 'Injectors will be populated in order, but correct operation', &
+            ' is not guaranteed'
+      END IF
+
+      DEALLOCATE(depths)
+    END IF
+
+  END SUBROUTINE read_injector_depths
+
+
+
   SUBROUTINE read_cpu_split
 
     CHARACTER(LEN=c_id_length) :: code_name, block_id
@@ -1430,7 +1511,7 @@ CONTAINS
           ALLOCATE(old_x_max(nprocx))
           CALL sdf_read_srl_cpu_split(sdf_handle, old_x_max)
         ELSE
-          IF (rank == 0) THEN
+          IF (rank == 0 .AND. use_exact_restart_set) THEN
             PRINT*, '*** WARNING ***'
             PRINT'('' SDF restart file was generated using'', &
                 & i4,'' CPUs.'')', npx
@@ -1650,26 +1731,6 @@ CONTAINS
 
 
 
-  FUNCTION it_qed_energy(array, npart_this_it, start, param)
-
-    REAL(num) :: it_qed_energy
-    REAL(num), DIMENSION(:), INTENT(IN) :: array
-    INTEGER, INTENT(INOUT) :: npart_this_it
-    LOGICAL, INTENT(IN) :: start
-    INTEGER, INTENT(IN), OPTIONAL :: param
-    INTEGER :: ipart
-
-    DO ipart = 1, npart_this_it
-      iterator_list%particle_energy = array(ipart)
-      iterator_list => iterator_list%next
-    END DO
-
-    it_qed_energy = 0
-
-  END FUNCTION it_qed_energy
-
-
-
 #ifdef TRIDENT_PHOTONS
   FUNCTION it_optical_depth_trident(array, npart_this_it, start, param)
 
@@ -1693,9 +1754,52 @@ CONTAINS
 
 
 
-  SUBROUTINE shift_particles_to_window(window_offset)
+#if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
+  FUNCTION it_qed_energy(array, npart_this_it, start, param)
 
-    REAL(num), INTENT(IN) :: window_offset
+    REAL(num) :: it_qed_energy
+    REAL(num), DIMENSION(:), INTENT(IN) :: array
+    INTEGER, INTENT(INOUT) :: npart_this_it
+    LOGICAL, INTENT(IN) :: start
+    INTEGER, INTENT(IN), OPTIONAL :: param
+    INTEGER :: ipart
+
+    DO ipart = 1, npart_this_it
+      iterator_list%particle_energy = array(ipart)
+      iterator_list => iterator_list%next
+    END DO
+
+    it_qed_energy = 0
+
+  END FUNCTION it_qed_energy
+#endif
+
+
+
+#ifdef BREMSSTRAHLUNG
+  FUNCTION it_optical_depth_bremsstrahlung(array, npart_this_it, start, param)
+
+    REAL(num) :: it_optical_depth_bremsstrahlung
+    REAL(num), DIMENSION(:), INTENT(IN) :: array
+    INTEGER, INTENT(INOUT) :: npart_this_it
+    LOGICAL, INTENT(IN) :: start
+    INTEGER, INTENT(IN), OPTIONAL :: param
+    INTEGER :: ipart
+
+    DO ipart = 1, npart_this_it
+      iterator_list%optical_depth_bremsstrahlung = array(ipart)
+      iterator_list => iterator_list%next
+    END DO
+
+    it_optical_depth_bremsstrahlung = 0
+
+  END FUNCTION it_optical_depth_bremsstrahlung
+#endif
+
+
+
+  SUBROUTINE shift_particles_to_window
+
     TYPE(particle), POINTER :: current
     TYPE(particle_list), POINTER :: partlist
     TYPE(particle_species), POINTER :: species
@@ -1717,15 +1821,14 @@ CONTAINS
 
 
 
-  SUBROUTINE create_moved_window(x_min, window_offset)
+  SUBROUTINE create_moved_window(x_min)
 
-    REAL(num), INTENT(IN) :: x_min, window_offset
+    REAL(num), INTENT(IN) :: x_min
     INTEGER :: ix
 
     DO ix = 1 - ng, nx_global + ng
       xb_offset_global(ix) = xb_offset_global(ix) - window_offset
     END DO
-    window_shift = window_offset
 
   END SUBROUTINE
 

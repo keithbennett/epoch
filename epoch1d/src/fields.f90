@@ -1,5 +1,4 @@
-! Copyright (C) 2010-2015 Keith Bennett <K.Bennett@warwick.ac.uk>
-! Copyright (C) 2009      Chris Brady <C.S.Brady@warwick.ac.uk>
+! Copyright (C) 2009-2019 University of Warwick
 !
 ! This program is free software: you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
@@ -83,7 +82,7 @@ CONTAINS
 
     IF (cpml_boundaries) THEN
       IF (field_order == 2) THEN
-        DO ix = 1, nx
+        DO ix = 0, nx
           cx1 = cnx / cpml_kappa_ex(ix)
 
           ex(ix) = ex(ix) &
@@ -101,7 +100,7 @@ CONTAINS
         c1 = 9.0_num / 8.0_num
         c2 = -1.0_num / 24.0_num
 
-        DO ix = 1, nx
+        DO ix = 0, nx
           cpml_x = cnx / cpml_kappa_ex(ix)
           cx1 = c1 * cpml_x
           cx2 = c2 * cpml_x
@@ -124,7 +123,7 @@ CONTAINS
         c2 = -25.0_num / 384.0_num
         c3 = 3.0_num / 640.0_num
 
-        DO ix = 1, nx
+        DO ix = 0, nx
           cpml_x = cnx / cpml_kappa_ex(ix)
           cx1 = c1 * cpml_x
           cx2 = c2 * cpml_x
@@ -152,7 +151,7 @@ CONTAINS
       IF (field_order == 2) THEN
         cx1 = cnx
 
-        DO ix = 1, nx
+        DO ix = 0, nx
           ex(ix) = ex(ix) &
               - fac * jx(ix)
 
@@ -171,7 +170,7 @@ CONTAINS
         cx1 = c1 * cnx
         cx2 = c2 * cnx
 
-        DO ix = 1, nx
+        DO ix = 0, nx
           ex(ix) = ex(ix) &
               - fac * jx(ix)
 
@@ -194,7 +193,7 @@ CONTAINS
         cx2 = c2 * cnx
         cx3 = c3 * cnx
 
-        DO ix = 1, nx
+        DO ix = 0, nx
           ex(ix) = ex(ix) &
               - fac * jx(ix)
 
@@ -227,7 +226,7 @@ CONTAINS
     IF (cpml_boundaries) THEN
       IF (field_order == 2) THEN
         IF (maxwell_solver == c_maxwell_solver_yee) THEN
-          DO ix = 1, nx
+          DO ix = 0, nx
             cx1 = hdtx / cpml_kappa_bx(ix)
 
             by(ix) = by(ix) &
@@ -237,7 +236,7 @@ CONTAINS
                 - cx1 * (ey(ix+1) - ey(ix  ))
           END DO
         ELSE
-          DO ix = 1, nx
+          DO ix = 0, nx
             cx1 = hdtx / cpml_kappa_bx(ix)
 
             by(ix) = by(ix) &
@@ -253,7 +252,7 @@ CONTAINS
         c1 = 9.0_num / 8.0_num
         c2 = -1.0_num / 24.0_num
 
-        DO ix = 1, nx
+        DO ix = 0, nx
           cpml_x = hdtx / cpml_kappa_bx(ix)
           cx1 = c1 * cpml_x
           cx2 = c2 * cpml_x
@@ -271,7 +270,7 @@ CONTAINS
         c2 = -25.0_num / 384.0_num
         c3 = 3.0_num / 640.0_num
 
-        DO ix = 1, nx
+        DO ix = 0, nx
           cpml_x = hdtx / cpml_kappa_bx(ix)
           cx1 = c1 * cpml_x
           cx2 = c2 * cpml_x
@@ -295,7 +294,7 @@ CONTAINS
         cx1 = hdtx
 
         IF (maxwell_solver == c_maxwell_solver_yee) THEN
-          DO ix = 1, nx
+          DO ix = 0, nx
             by(ix) = by(ix) &
                 + cx1 * (ez(ix+1) - ez(ix  ))
 
@@ -303,7 +302,7 @@ CONTAINS
                 - cx1 * (ey(ix+1) - ey(ix  ))
           END DO
         ELSE
-          DO ix = 1, nx
+          DO ix = 0, nx
             by(ix) = by(ix) &
                 + cx1 * (alphax * (ez(ix+1) - ez(ix  ))  &
                        + deltax * (ez(ix+2) - ez(ix-1)))
@@ -320,7 +319,7 @@ CONTAINS
         cx1 = c1 * hdtx
         cx2 = c2 * hdtx
 
-        DO ix = 1, nx
+        DO ix = 0, nx
           by(ix) = by(ix) &
               + cx1 * (ez(ix+1) - ez(ix  )) &
               + cx2 * (ez(ix+2) - ez(ix-1))
@@ -338,7 +337,7 @@ CONTAINS
         cx2 = c2 * hdtx
         cx3 = c3 * hdtx
 
-        DO ix = 1, nx
+        DO ix = 0, nx
           by(ix) = by(ix) &
               + cx1 * (ez(ix+1) - ez(ix  )) &
               + cx2 * (ez(ix+2) - ez(ix-1)) &
