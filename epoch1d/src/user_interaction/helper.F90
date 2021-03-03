@@ -135,12 +135,7 @@ CONTAINS
               species_drift(:,n))
         END DO
         CALL deltaf_load(ispecies, species_temp, species_drift)
-<<<<<<< HEAD
-      ELSE IF (species_list(ispecies)%ic_df_type &
-          == c_ic_df_relativistic_thermal) THEN
-=======
       ELSE IF (species%ic_df_type == c_ic_df_relativistic_thermal) THEN
->>>>>>> origin/4.17-devel
         CALL setup_particle_temperature_relativistic(species_temp, species, &
             species_drift)
       ELSE IF (species%ic_df_type == c_ic_df_arbitrary) THEN
