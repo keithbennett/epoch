@@ -612,7 +612,7 @@ CONTAINS
     new_particle%work_x_total = 0_num
     new_particle%work_y_total = 0_num
     new_particle%work_z_total = 0_num
-#endif 
+#endif
 
   END SUBROUTINE init_particle
 

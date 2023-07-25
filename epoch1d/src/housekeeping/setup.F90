@@ -1312,7 +1312,7 @@ CONTAINS
           CALL abort_code(c_err_pp_options_missing)
           STOP
 #endif
-        
+
         ELSE IF (block_id(1:23) == 'time_integrated_work_x/') THEN
 #ifdef WORK_DONE_INTEGRATED
           CALL sdf_read_point_variable(sdf_handle, npart_local, &
@@ -1869,7 +1869,7 @@ CONTAINS
   END FUNCTION it_work_y_total
 
 
-  
+
   FUNCTION it_work_z_total(array, npart_this_it, start, param)
 
     REAL(num) :: it_work_z_total
@@ -1886,7 +1886,7 @@ CONTAINS
 
     it_work_z_total = 0
 
-  END FUNCTION it_work_z_total  
+  END FUNCTION it_work_z_total
 #endif
 
 

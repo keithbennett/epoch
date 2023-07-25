@@ -2477,7 +2477,7 @@ CONTAINS
 
     ! Update particle ID values if using
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
-    DO i = 1, n_species 
+    DO i = 1, n_species
       CALL generate_particle_ids(species_list(i)%attached_list)
     END DO
 #endif

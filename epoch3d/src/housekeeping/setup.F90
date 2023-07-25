@@ -2084,7 +2084,7 @@ CONTAINS
   END FUNCTION it_work_y_total
 
 
-  
+
   FUNCTION it_work_z_total(array, npart_this_it, start, param)
 
     REAL(num) :: it_work_z_total
@@ -2101,7 +2101,7 @@ CONTAINS
 
     it_work_z_total = 0
 
-  END FUNCTION it_work_z_total  
+  END FUNCTION it_work_z_total
 #endif
 
 

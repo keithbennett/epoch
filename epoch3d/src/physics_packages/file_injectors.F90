@@ -378,11 +378,11 @@ CONTAINS
         vx = px_in*inv_gamma_mass
         vy = py_in*inv_gamma_mass
         vz = pz_in*inv_gamma_mass
-      ELSE 
+      ELSE
         iabs_p = 1.0_num / SQRT(px_in**2 + py_in**2 + pz_in**2)
-        vx = px_in * iabs_p * c 
+        vx = px_in * iabs_p * c
         vy = py_in * iabs_p * c
-        vz = pz_in * iabs_p * c  
+        vz = pz_in * iabs_p * c
       END IF
 
       ! Calculate position of injection such that paritlces reach the boundary

@@ -190,7 +190,7 @@ CONTAINS
       positron_brem = as_logical_print(value, element, errcode)
       RETURN
     END IF
-    
+
     errcode = c_err_unknown_element
 #endif
 

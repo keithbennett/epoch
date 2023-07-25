@@ -311,7 +311,7 @@ CONTAINS
 #if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
       ! For photons, assign additional variable used in photon particle-push
       IF (species_list(injector%species)%species_type == c_species_id_photon) &
-          THEN 
+          THEN
         new%particle_energy = SQRT(SUM(new%part_p**2)) * c
       END IF
 #endif

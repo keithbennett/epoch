@@ -803,7 +803,7 @@ MODULE shared_data
 
   TYPE(injector_files) :: injector_filenames
   INTEGER :: custom_injector_count
-  
+
   !----------------------------------------------------------------------------
   ! laser boundaries
   !----------------------------------------------------------------------------

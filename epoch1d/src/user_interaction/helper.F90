@@ -147,8 +147,8 @@ CONTAINS
 
 #if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
       ! For photons, assign additional variable used in photon particle-push
-      IF (species_list(ispecies)%species_type == c_species_id_photon) THEN 
-        current => species%attached_list%head 
+      IF (species_list(ispecies)%species_type == c_species_id_photon) THEN
+        current => species%attached_list%head
         DO WHILE (ASSOCIATED(current))
           current%particle_energy = SQRT(SUM(current%part_p**2)) * c
           current => current%next
