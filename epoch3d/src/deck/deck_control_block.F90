@@ -193,23 +193,6 @@ CONTAINS
     IF (dlb_maximum_interval < 1) dlb_maximum_interval = HUGE(1)
     IF (dlb_force_interval < 1) dlb_force_interval = HUGE(1)
 
-    ! Check physics tables are in the correct place
-    IF (rank == 0) THEN
-      INQUIRE(file=TRIM(physics_table_location) // &
-          '/ionisation_energies.table', exist=exists)
-      IF (.NOT.exists) THEN
-        DO iu = 1, nio_units ! Print to stdout and to file
-          io = io_units(iu)
-          WRITE(io,*) '*** WARNING ***'
-          WRITE(io,*) 'Unable to find ionisation_energies.table in ', &
-              'directory "' // TRIM(physics_table_location) // '"'
-          WRITE(io,*) 'Either tables have been modified, or the path to the ', &
-              'physics tables must be set'
-          WRITE(io,*) 'Use key: physics_table_location in the control block.'
-        END DO
-      END IF
-    END IF
-
     IF (use_field_ionisation) need_random_state = .TRUE.
 
   END SUBROUTINE control_deck_finalise
