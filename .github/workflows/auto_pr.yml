@@ -30,7 +30,7 @@ jobs:
 
     - name: Create Pull Request
       id: open-pr
-      run: gh pr create -B $BASE_REF -H $DEST_BRANCH --title "Pull $BASE_REF into $DEST_BRANCH"
+      run: gh pr create -B $BASE_REF -H $DEST_BRANCH --title "Pull $BASE_REF into $DEST_BRANCH" --body "merge"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
