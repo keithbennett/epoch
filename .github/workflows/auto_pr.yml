@@ -4,10 +4,6 @@ on:
   push:
     branches:
     - 4.*-devel
-    inputs:
-      pullRequestNumber:
-        description: Pull request number to auto-approve
-        required: false
 
 jobs:
   pull-request:
@@ -33,12 +29,13 @@ jobs:
            echo "DEST_BRANCH=$DEST_BRANCH" >> $GITHUB_ENV;
 
     - name: Create Pull Request
-      id: open-pr
-      run: gh pr create -B $BASE_REF -H $DEST_BRANCH --title "Pull $BASE_REF into $DEST_BRANCH" --body "merge"
+      id: open_pr
+      run: gh pr create -B $BASE_REF -H $DEST_BRANCH --title "Pull $BASE_REF into $DEST_BRANCH" --body "merge";
+           echo "pull_request_number=$(gh pr view --json number -q .number || echo "")" >> $GITHUB_OUTPUT
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Auto approve
       uses: hmarr/auto-approve-action@v4
       with:
-        pull-request-number: ${{ github.event.inputs.pullRequestNumber }}
+        pull-request-number: ${{ steps.open_pr.outputs.pull_request_number }}
