@@ -3,7 +3,7 @@ name: auto-pr
 on:
   push:
     branches:
-    - 4.*-devel
+    - main
 
 jobs:
   pull-request:
