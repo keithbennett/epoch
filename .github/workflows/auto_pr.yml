@@ -4,8 +4,6 @@ on:
   push:
     branches:
     - 4.*-devel
-
-  workflow_dispatch:
     inputs:
       pullRequestNumber:
         description: Pull request number to auto-approve
