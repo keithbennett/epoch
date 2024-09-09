@@ -3,14 +3,14 @@ name: auto-pr
 on:
   push:
     branches:
-    - 4.*-devel
+    - main
 
 jobs:
   pull-request:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
@@ -27,16 +27,13 @@ jobs:
            echo "DEST_BRANCH=$DEST_BRANCH" >> $GITHUB_ENV;
 
     - name: Create Pull Request
-      id: open-pr
-      uses: repo-sync/pull-request@v2
-      with:
-        destination_branch: ${{ env.DEST_BRANCH }}
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        pr_title: "Pull $BASE_REF into $DEST_BRANCH"
-        pr_label: "auto-pr"
+      id: open_pr
+      run: gh pr create -B $BASE_REF -H $DEST_BRANCH --title "Pull $BASE_REF into $DEST_BRANCH" --body "";
+           echo "pull_request_number=$(gh pr view --json number -q .number || echo "")" >> $GITHUB_OUTPUT
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Auto approve
-      uses: hmarr/auto-approve-action@v2
+      uses: hmarr/auto-approve-action@v4
       with:
-        github-token: ${{ secrets.GH_APPROVE }}
-        pull-request-number: ${{ steps.open-pr.outputs.pr_number }}
+        pull-request-number: ${{ steps.open_pr.outputs.pull_request_number }}
