@@ -15,7 +15,7 @@ jobs:
         fetch-depth: 0
 
     - name: Set branch variables
-      run: BASE_REF=$(echo $GITHUB_REF | cut -f3- -d\/);
+      run: env; BASE_REF=$(echo $GITHUB_REF | cut -f3- -d\/);
            major=$(echo $BASE_REF | cut -f1 -d\.);
            minor=$(echo $BASE_REF | cut -f2 -d\. | cut -f1 -d\-);
            DEST_BRANCH=$major.$((minor+1))-devel;
