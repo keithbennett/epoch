@@ -8,6 +8,8 @@ on:
 jobs:
   pull-request:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -35,5 +37,4 @@ jobs:
     - name: Auto approve
       uses: hmarr/auto-approve-action@v4
       with:
-        github-token: ${{ secrets.GH_APPROVE }}
         pull-request-number: ${{ steps.open-pr.outputs.pr_number }}
